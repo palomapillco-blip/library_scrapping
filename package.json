@@ -1,0 +1,16 @@
+{
+  "name": "library-scrapping",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Monitor diario de los anuncios de la competencia en Meta Ad Library y Google Ads Transparency Center",
+  "scripts": {
+    "capture": "node src/capture.js",
+    "publish": "node src/publish.js",
+    "serve": "node src/serve.js"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0",
+    "tesseract.js": "^5.1.1"
+  }
+}

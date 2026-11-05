@@ -1,0 +1,101 @@
+name: Captura diaria
+
+on:
+  schedule:
+    # Horas en UTC (Lima = UTC−5). GitHub suele atrasar las corridas programadas un rato.
+    - cron: '0 12 * * *'    # 7:00 a. m.
+    - cron: '0 18 * * *'    # 1:00 p. m. (segunda vuelta del día)
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'IDs de marcas separados por coma (vacío = todas)'
+        required: false
+        default: ''
+      source:
+        description: 'Fuente: meta, google o vacío para ambas'
+        required: false
+        default: ''
+  # Un cambio del dashboard subido a main se publica al toque, sin capturar.
+  push:
+    branches: [main]
+    paths: ['index.html']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.event_name == 'push' && 'dashboard' || 'captura' }}
+  cancel-in-progress: false
+
+jobs:
+  captura:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      OUT_DIR: site
+      TZ: America/Lima
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Publicar solo el dashboard
+        if: github.event_name == 'push'
+        env:
+          PUBLISH_REMOTE: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+        run: node src/publish.js --dashboard
+
+      # Lo publicado: el día anterior (para marcar lo nuevo) y las miniaturas que ya existen.
+      - name: Traer historial publicado
+        if: github.event_name != 'push'
+        run: |
+          mkdir -p site
+          if git fetch --depth=1 origin gh-pages; then
+            git archive FETCH_HEAD | tar -x -C site
+          fi
+
+      - name: Instalar dependencias
+        if: github.event_name != 'push'
+        run: npm install --no-audit --no-fund
+
+      - name: Cache de Playwright y del idioma de OCR
+        if: github.event_name != 'push'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            .cache/tesseract
+          key: deps-${{ runner.os }}-${{ hashFiles('package.json') }}
+
+      - if: github.event_name != 'push'
+        run: npx playwright install --with-deps chromium
+
+      - name: Capturar anuncios
+        if: github.event_name != 'push'
+        env:
+          ONLY: ${{ github.event.inputs.only }}
+          SOURCE: ${{ github.event.inputs.source }}
+        run: |
+          set --
+          [ -n "$ONLY" ] && set -- "$@" --only "$ONLY"
+          [ -n "$SOURCE" ] && set -- "$@" --source "$SOURCE"
+          node --no-deprecation src/capture.js "$@"
+
+      - name: Resumen de la captura
+        if: always() && github.event_name != 'push'
+        run: |
+          f=$(ls site/data/2*.json 2>/dev/null | sort | tail -1)
+          [ -z "$f" ] && { echo "No se generó el archivo del día"; exit 0; }
+          echo "Archivo: $f"
+          jq -r '"META", (.meta.brands[] | "  \(.name): \(.status) · \(.count) con palabra clave de \(.seen // 0) · \(.error // "")"),
+                 "GOOGLE", (.google.brands[] | "  \(.name): \(.status) · \(.count) nuevos · \(.cyber) Cyber · \(.error // "")"),
+                 "Clasificación Google: \([.google.ads[].cyber] | group_by(.) | map("\(.[0]): \(length)") | join(", "))",
+                 "Miniaturas: Meta \([.meta.ads[] | select(.img)] | length)/\(.meta.ads | length) · Google \([.google.ads[] | select(.img)] | length)/\(.google.ads | length)"' "$f" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar en gh-pages
+        if: github.event_name != 'push'
+        env:
+          PUBLISH_REMOTE: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+        run: node src/publish.js --from site

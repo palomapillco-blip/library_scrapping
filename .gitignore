@@ -1,0 +1,7 @@
+node_modules/
+.cache/
+.DS_Store
+
+# Capturas locales: en GitHub Actions los datos se publican en la rama gh-pages.
+/site/
+.last-capture.json
