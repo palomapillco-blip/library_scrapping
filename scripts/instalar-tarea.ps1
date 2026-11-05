@@ -7,14 +7,23 @@
 param([string]$Hora = '08:00', [switch]$Quitar)
 
 $nombre = 'LibraryScrapping-Meta'
-if ($Quitar) { schtasks /Delete /TN $nombre /F; exit $LASTEXITCODE }
+if ($Quitar) {
+  Unregister-ScheduledTask -TaskName $nombre -Confirm:$false
+  Write-Host "Tarea '$nombre' eliminada."
+  exit 0
+}
 
 $script = Join-Path $PSScriptRoot 'meta-local.ps1'
-$accion = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script`""
-schtasks /Create /TN $nombre /TR $accion /SC DAILY /ST $Hora /F
-if ($LASTEXITCODE -eq 0) {
-  Write-Host "Tarea '$nombre' programada todos los dias a las $Hora."
-  Write-Host "Correrla ahora:   schtasks /Run /TN $nombre"
-  Write-Host "Ver el registro:  Get-Content .cache\meta-local.log -Tail 30"
-}
-exit $LASTEXITCODE
+$repo = Split-Path -Parent $PSScriptRoot
+$accion = New-ScheduledTaskAction -Execute 'powershell.exe' -WorkingDirectory $repo `
+  -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f $script)
+$disparador = New-ScheduledTaskTrigger -Daily -At $Hora
+# Si la PC estaba apagada a la hora, corre apenas se pueda; no corre con bateria baja ni dura mas de 1 hora.
+$ajustes = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName $nombre -Action $accion -Trigger $disparador -Settings $ajustes `
+  -Description 'Library Scrapping: captura diaria de anuncios de Meta y publicacion en GitHub Pages' -Force | Out-Null
+
+$info = Get-ScheduledTaskInfo -TaskName $nombre
+Write-Host "Tarea '$nombre' programada todos los dias a las $Hora. Proxima corrida: $($info.NextRunTime)"
+Write-Host "Correrla ahora:   Start-ScheduledTask -TaskName $nombre"
+Write-Host "Ver el registro:  Get-Content .cache\meta-local.log -Tail 30"

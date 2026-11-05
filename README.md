@@ -54,7 +54,7 @@ Desde un navegador normal entrega la lista completa. Por eso Meta también se ca
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\instalar-tarea.ps1          # instalar (otra hora: -Hora 09:30)
-schtasks /Run /TN LibraryScrapping-Meta                                       # correrla ahora
+Start-ScheduledTask -TaskName LibraryScrapping-Meta                           # correrla ahora
 Get-Content .cache\meta-local.log -Tail 30                                    # ver qué pasó
 powershell -ExecutionPolicy Bypass -File scripts\instalar-tarea.ps1 -Quitar  # quitarla
 ```
