@@ -442,9 +442,14 @@ async function main() {
 export function mergeSource(fresh, old, order = []) {
   if (!old) return fresh;
   if (!fresh) return old;
+  // Se conserva lo anterior si la marca no se corrió, si ahora falló, o si lo anterior era más completo
+  // (p. ej., una captura de Meta desde un navegador normal trae la lista entera; desde GitHub, solo la primera página).
+  const count = (src, id) => (src.ads || []).filter((a) => a.brand === id).length;
   const keepOld = (old.brands || []).filter((ob) => {
     const nb = fresh.brands.find((x) => x.id === ob.id);
-    return !nb || (nb.status !== 'ok' && ob.status === 'ok');
+    if (!nb) return true;
+    if (ob.status !== 'ok') return false;
+    return nb.status !== 'ok' || count(old, ob.id) > count(fresh, ob.id);
   }).map((x) => x.id);
   const brands = [...(old.brands || []).filter((x) => keepOld.includes(x.id)), ...fresh.brands.filter((x) => !keepOld.includes(x.id))];
   const ads = [...(old.ads || []).filter((a) => keepOld.includes(a.brand)), ...fresh.ads.filter((a) => !keepOld.includes(a.brand))];
