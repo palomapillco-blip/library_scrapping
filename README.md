@@ -42,6 +42,25 @@ Se aplica en la siguiente corrida.
    elegir marcas o una sola fuente.
 4. **Cambios al dashboard:** si subes un cambio de `index.html` a `main`, se publica solo, sin capturar.
 
+## Meta completo desde esta PC
+
+Desde los servidores de GitHub, Meta solo entrega la primera página de cada marca (~30 anuncios con más impresiones).
+Desde un navegador normal entrega la lista completa. Por eso Meta también se captura desde la PC:
+
+- **Node portátil** en `tools\node-v22.x-win-x64` (sin instalador ni permisos de administrador). Playwright fijado en `1.64.1`.
+- **`scripts\meta-local.ps1`:** actualiza desde `main`, trae lo publicado, captura Meta de todas las marcas y publica
+  en `gh-pages`. Si GitHub y la PC capturan el mismo día, gana la captura más completa.
+- **Tarea programada de Windows** `LibraryScrapping-Meta`, todos los días a las 8:00, con la sesión iniciada:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\instalar-tarea.ps1          # instalar (otra hora: -Hora 09:30)
+schtasks /Run /TN LibraryScrapping-Meta                                       # correrla ahora
+Get-Content .cache\meta-local.log -Tail 30                                    # ver qué pasó
+powershell -ExecutionPolicy Bypass -File scripts\instalar-tarea.ps1 -Quitar  # quitarla
+```
+
+Si la PC está apagada o con la sesión cerrada a esa hora, ese día Meta queda con lo que capturó GitHub (top ~30).
+
 ## Uso local (opcional; requiere Node 20 o superior)
 
 ```bash
