@@ -140,22 +140,27 @@ async function scrapeMetaPage(maxScrolls) {
     };
   };
   const ads = new Map();
+  const debug = { clicks: 0, scrolls: 0, buttonsAfterLast: [] };
   let still = 0;
   for (let i = 0; i < maxScrolls; i++) {
     const before = ads.size;
     cards().forEach((c) => { const a = read(c); if (a.id && !ads.has(a.id)) ads.set(a.id, a); });
     still = ads.size === before ? still + 1 : 0;
-    if (still >= 3) break;
-    window.scrollTo(0, document.body.scrollHeight);
+    if (still >= 4) break;
     const cs = cards(); const last = cs[cs.length - 1];
-    // El "Ver más" del final de la lista (no los "Ver más" dentro de cada anuncio, que abren el sitio del anunciante).
-    const more = last ? [...document.querySelectorAll('[role=button]')]
-      .filter((e) => /^(Ver más|See more)$/.test((e.innerText || '').trim()) && !e.getAttribute('href') && !last.contains(e) && (last.compareDocumentPosition(e) & 4))
-      .pop() : null;
-    if (more) more.click();
-    await sleep(2500);
+    if (last) last.scrollIntoView({ block: 'end' });
+    window.scrollTo(0, document.body.scrollHeight);
+    debug.scrolls++;
+    // El "Ver más" del final de la lista: el último botón que está DESPUÉS de la última tarjeta (los "Ver más" de cada
+    // anuncio están dentro de su tarjeta y abren el sitio del anunciante).
+    const after = last ? [...document.querySelectorAll('[role=button], [role=link], button')]
+      .filter((e) => !last.contains(e) && (last.compareDocumentPosition(e) & 4)) : [];
+    debug.buttonsAfterLast = [...new Set(after.map((e) => (e.innerText || '').trim()).filter((t) => t && t.length < 40))].slice(0, 8);
+    const more = after.filter((e) => /^(Ver más|See more|Mostrar más|Show more|Ver más resultados|See more results)$/i.test((e.innerText || '').trim())).pop();
+    if (more) { more.click(); debug.clicks++; }
+    await sleep(3000);
   }
-  return [...ads.values()];
+  return { ads: [...ads.values()], debug };
 }
 
 async function captureMeta(context, brand, s) {
@@ -169,11 +174,12 @@ async function captureMeta(context, brand, s) {
       if (await b.count().catch(() => 0)) { await b.first().click().catch(() => {}); break; }
     }
     await page.waitForFunction(
-      () => /(Identificador de la biblioteca|Library ID):|No hay anuncios|No ads match|~?0 resultados|~?0 results/.test(document.body.innerText),
+      () => Boolean(document.body) && /(Identificador de la biblioteca|Library ID):|No hay anuncios|No ads match|~?0 resultados|~?0 results/.test(document.body.innerText || ''),
       null, { timeout: 45000 },
     );
-    const ads = await page.evaluate(scrapeMetaPage, s.maxScrolls || 60);
-    return { status: 'ok', ads, durationMs: Date.now() - t0 };
+    const total = await page.evaluate(() => ((document.body.innerText || '').match(/~?[\d.,]+ (resultados?|results?)/) || [''])[0]);
+    const { ads, debug } = await page.evaluate(scrapeMetaPage, s.maxScrolls || 60);
+    return { status: 'ok', ads, durationMs: Date.now() - t0, debug: { ...debug, total, lang: await page.evaluate(() => document.documentElement.lang) } };
   } catch (e) {
     return { status: 'error', error: String(e.message || e).split('\n')[0], ads: [], durationMs: Date.now() - t0 };
   } finally {
@@ -265,6 +271,23 @@ async function main() {
     return ocr;
   };
 
+  // OCR de banners de Google: es lento (varios segundos por imagen), así que hay un cupo por corrida. Lo que no alcanza
+  // queda "pendiente ocr" y se lee en las corridas siguientes. Se lee la miniatura (más rápida que la imagen original).
+  let ocrBudget = s.maxOcr ?? 60;
+  const ocrThumb = async (file) => {
+    if (ocrBudget <= 0 || !(await exists(file))) return null;
+    ocrBudget--;
+    try {
+      const { data } = await (await getOcr()).recognize(await fs.readFile(file));
+      // El OCR lee mal letras estilizadas: si no encuentra la palabra, el banner queda "Por revisar", no "No".
+      return norm(data.text).replace(/\s+/g, '').includes(kw.replace(/\s+/g, ''))
+        ? { cyber: 'Sí', method: 'ocr' }
+        : { cyber: 'Por revisar', method: 'ocr' };
+    } catch {
+      return { cyber: 'Por revisar', method: 'imagen' };
+    }
+  };
+
   const meta = { brands: [], ads: [] };
   const google = { brands: [], ads: [] };
 
@@ -285,8 +308,8 @@ async function main() {
           img: ok ? `img/meta-${a.id}.jpg` : null,
         });
       }
-      meta.brands.push({ id: b.id, name: b.name, status: r.status, error: r.error ?? null, seen: r.ads.length, count: withKw.length, durationMs: r.durationMs });
-      console.log(`${r.status === 'ok' ? '✓' : '✗'} Meta   ${b.name.padEnd(10)} ${String(withKw.length).padStart(3)} con "${s.keyword}" de ${r.ads.length}${r.error ? ' · ' + r.error : ''}`);
+      meta.brands.push({ id: b.id, name: b.name, status: r.status, error: r.error ?? null, seen: r.ads.length, count: withKw.length, durationMs: r.durationMs, debug: r.debug ?? null });
+      console.log(`${r.status === 'ok' ? '✓' : '✗'} Meta   ${b.name.padEnd(10)} ${String(withKw.length).padStart(3)} con "${s.keyword}" de ${r.ads.length}${r.debug ? ` (Meta dice ${r.debug.total || '?'} · ${r.debug.clicks} clics en "Ver más" · idioma ${r.debug.lang} · botones al final: ${r.debug.buttonsAfterLast.join(' / ') || 'ninguno'})` : ''}${r.error ? ' · ' + r.error : ''}`);
     }
   }
 
@@ -308,7 +331,14 @@ async function main() {
             format: FORMAT[c[4]] || String(c[4]), firstShown: iso(c[6][1]), lastShown: iso(c[7][1]),
           };
           const k = known.get(url);
-          if (k) return { ...k, ...base };
+          if (k) {
+            // Banners que quedaron sin OCR por el límite de una corrida anterior: se leen ahora si queda cupo.
+            if (k.method === 'pendiente ocr' && k.img) {
+              const r = await ocrThumb(path.join(OUT_DIR, k.img));
+              if (r) return { ...k, ...base, ...r };
+            }
+            return { ...k, ...base };
+          }
           let heads = [], descs = [], imgUrl = '', content = '';
           if (c[3]?.[1]?.[4]) {
             try {
@@ -327,12 +357,8 @@ async function main() {
           else if (heads.length || descs.length) { cyber = 'No'; method = 'texto'; }
           else if (content.includes(kw)) { cyber = 'Sí'; method = 'contenido'; }
           else if (buf) {
-            try {
-              const { data } = await (await getOcr()).recognize(buf);
-              // El OCR lee mal letras estilizadas: si no encuentra la palabra, el banner queda "Por revisar", no "No".
-              if (norm(data.text).replace(/\s+/g, '').includes(kw.replace(/\s+/g, ''))) { cyber = 'Sí'; method = 'ocr'; }
-              else { cyber = 'Por revisar'; method = 'ocr'; }
-            } catch { cyber = 'Por revisar'; method = 'imagen'; }
+            const r = await ocrThumb(file);
+            ({ cyber, method } = r || { cyber: 'Por revisar', method: 'pendiente ocr' });
           }
           return {
             ...base, headlines: heads.join(' | '), description: descs.join(' | '), cyber, method,

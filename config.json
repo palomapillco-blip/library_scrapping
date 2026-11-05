@@ -7,7 +7,8 @@
     "country": "PE",
     "googleRegion": 2604,
     "thumbWidth": 320,
-    "maxScrolls": 60
+    "maxScrolls": 60,
+    "maxOcr": 60
   },
   "brands": [
     { "id": "ripley", "name": "Ripley", "group": "Ripley", "metaPageId": "364617108960", "googleDomain": "ripley.com.pe" },

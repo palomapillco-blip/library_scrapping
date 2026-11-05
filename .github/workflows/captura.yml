@@ -30,7 +30,7 @@ concurrency:
 jobs:
   captura:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       OUT_DIR: site
       TZ: America/Lima
