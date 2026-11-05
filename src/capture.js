@@ -160,7 +160,29 @@ async function scrapeMetaPage(maxScrolls) {
     if (more) { more.click(); debug.clicks++; }
     await sleep(3000);
   }
+  // Lectura final (con maxScrolls = 0 solo lee lo que ya está cargado: el recorrido lo hace captureMeta con clics reales).
+  cards().forEach((c) => { const a = read(c); if (a.id && !ads.has(a.id)) ads.set(a.id, a); });
   return { ads: [...ads.values()], debug };
+}
+
+// Marca con data-cm-more el "Ver más" del final de la lista (el último botón que está después de la última tarjeta;
+// los "Ver más" de cada anuncio están dentro de su tarjeta y abren el sitio del anunciante). Devuelve cuántas tarjetas hay.
+function markLoadMore() {
+  const ID_RE = /^(Identificador de la biblioteca|Library ID):\s*(\d+)/;
+  document.querySelectorAll('[data-cm-more]').forEach((e) => e.removeAttribute('data-cm-more'));
+  const ids = [...document.querySelectorAll('span,div')].filter((e) => e.childElementCount === 0 && ID_RE.test(e.textContent.trim()));
+  const lastId = ids[ids.length - 1];
+  let last = lastId;
+  while (last && last.parentElement) {
+    const p = last.parentElement;
+    if ((p.innerText.match(/(Identificador de la biblioteca|Library ID):/g) || []).length > 1) break;
+    last = p;
+  }
+  const after = last ? [...document.querySelectorAll('[role=button], [role=link], button')]
+    .filter((e) => !last.contains(e) && (last.compareDocumentPosition(e) & 4)) : [];
+  const more = after.filter((e) => /^(Ver más|See more|Mostrar más|Show more|Ver más resultados|See more results)$/i.test((e.innerText || '').trim())).pop();
+  if (more) more.setAttribute('data-cm-more', '1');
+  return { cards: ids.length, found: Boolean(more), buttons: [...new Set(after.map((e) => (e.innerText || '').trim()).filter((t) => t && t.length < 40))].slice(0, 8) };
 }
 
 async function captureMeta(context, brand, s) {
@@ -178,7 +200,27 @@ async function captureMeta(context, brand, s) {
       null, { timeout: 45000 },
     );
     const total = await page.evaluate(() => ((document.body.innerText || '').match(/~?[\d.,]+ (resultados?|results?)/) || [''])[0]);
-    const { ads, debug } = await page.evaluate(scrapeMetaPage, s.maxScrolls || 60);
+    // Recorre la lista con scroll y clics reales de mouse en "Ver más" (un click() por código no carga más en headless).
+    const debug = { clicks: 0, scrolls: 0, buttonsAfterLast: [], cardsByStep: [] };
+    let prev = -1, still = 0;
+    for (let i = 0; i < (s.maxScrolls || 60) && still < 4; i++) {
+      await page.mouse.wheel(0, 30000).catch(() => {});
+      debug.scrolls++;
+      const m = await page.evaluate(markLoadMore);
+      debug.buttonsAfterLast = m.buttons;
+      if (m.found) {
+        const more = page.locator('[data-cm-more]').last();
+        await more.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+        if (await more.click({ timeout: 5000 }).then(() => true, () => false)) debug.clicks++;
+      }
+      await page.waitForTimeout(3000);
+      const n = (await page.evaluate(markLoadMore)).cards;
+      debug.cardsByStep.push(n);
+      still = n === prev ? still + 1 : 0;
+      prev = n;
+    }
+    debug.cardsByStep = debug.cardsByStep.slice(-6);
+    const { ads } = await page.evaluate(scrapeMetaPage, 0);
     return { status: 'ok', ads, durationMs: Date.now() - t0, debug: { ...debug, total, lang: await page.evaluate(() => document.documentElement.lang) } };
   } catch (e) {
     return { status: 'error', error: String(e.message || e).split('\n')[0], ads: [], durationMs: Date.now() - t0 };
@@ -309,7 +351,7 @@ async function main() {
         });
       }
       meta.brands.push({ id: b.id, name: b.name, status: r.status, error: r.error ?? null, seen: r.ads.length, count: withKw.length, durationMs: r.durationMs, debug: r.debug ?? null });
-      console.log(`${r.status === 'ok' ? '✓' : '✗'} Meta   ${b.name.padEnd(10)} ${String(withKw.length).padStart(3)} con "${s.keyword}" de ${r.ads.length}${r.debug ? ` (Meta dice ${r.debug.total || '?'} · ${r.debug.clicks} clics en "Ver más" · idioma ${r.debug.lang} · botones al final: ${r.debug.buttonsAfterLast.join(' / ') || 'ninguno'})` : ''}${r.error ? ' · ' + r.error : ''}`);
+      console.log(`${r.status === 'ok' ? '✓' : '✗'} Meta   ${b.name.padEnd(10)} ${String(withKw.length).padStart(3)} con "${s.keyword}" de ${r.ads.length}${r.debug ? ` (Meta dice ${r.debug.total || '?'} · ${r.debug.clicks} clics en "Ver más" · tarjetas ${r.debug.cardsByStep.join('→')} · idioma ${r.debug.lang} · botones al final: ${r.debug.buttonsAfterLast.join(' / ') || 'ninguno'})` : ''}${r.error ? ' · ' + r.error : ''}`);
     }
   }
 
