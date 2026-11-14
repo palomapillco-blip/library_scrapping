@@ -1,0 +1,36 @@
+{
+ "updatedAt": "2026-11-14T12:39:17.119Z",
+ "latest": "2026-11-14",
+ "days": [
+  {
+   "date": "2026-11-05",
+   "campaign": "Cyber Wow 2026",
+   "meta": 346,
+   "google": 422
+  },
+  {
+   "date": "2026-11-10",
+   "campaign": "Cyber Wow 2026",
+   "meta": 4,
+   "google": 486
+  },
+  {
+   "date": "2026-11-12",
+   "campaign": "Cyber Wow 2026",
+   "meta": 5,
+   "google": 474
+  },
+  {
+   "date": "2026-11-13",
+   "campaign": "Cyber Wow 2026",
+   "meta": 6,
+   "google": 463
+  },
+  {
+   "date": "2026-11-14",
+   "campaign": "Cyber Wow 2026",
+   "meta": 6,
+   "google": 448
+  }
+ ]
+}
